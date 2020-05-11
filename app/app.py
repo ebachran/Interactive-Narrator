@@ -6,8 +6,12 @@ import json
 import datetime, time
 
 # tell python where to look for packages
-sys.path.append('/var/www/interactivenarrator')
+# Depends on user running "flask run" from app directory
+sys.path.append(os.getcwd())
+#sys.path.append('D:/repos/Interactive-Narrator/app')
+#sys.path.append('/var/www/interactivenarrator')
 
+import config, socket
 from sqlalchemy import create_engine, select, update, func
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import and_, not_, or_
@@ -20,10 +24,16 @@ from passlib.hash import sha256_crypt
 from itsdangerous import URLSafeTimedSerializer
 from form import SetInfoForm, LoginForm, RegistrationForm, ContactForm, EmailForm, PasswordForm
 from post import add_data_to_db
-import config, socket
+#import config, socket
+
+from . import db
 
 # tell python where to look for VisualNarrator packages
-sys.path.append('/var/www/VisualNarrator')
+sys.path.append(os.path.abspath(os.path.join(os.getcwd(), os.pardir, os.pardir)))
+sys.path.append(os.path.abspath(os.path.join(os.getcwd(), os.pardir, os.pardir, 'VisualNarrator')))
+#sys.path.append('D:/repos')
+#sys.path.append('D:/repos/VisualNarrator')
+#sys.path.append('/var/www/VisualNarrator')
 
 from VisualNarrator import run
 
@@ -31,8 +41,8 @@ from VisualNarrator import run
 spacy_nlp = run.initialize_nlp()
 
 # import the database models
-from models import Base, User, UserStoryVN, RelationShipVN, ClassVN, CompanyVN, \
-    SprintVN, engine, us_class_association_table, \
+from models import User, UserStoryVN, RelationShipVN, ClassVN, CompanyVN, \
+    SprintVN, us_class_association_table, \
     us_relationship_association_table, \
     us_sprint_association_table
 
@@ -41,18 +51,12 @@ from models import Base, User, UserStoryVN, RelationShipVN, ClassVN, CompanyVN, 
 app = Flask(__name__)
 app.config.from_object(config)
 
-db = SQLAlchemy(app)
-db.Model = Base
+db.init_app(app)
+
+with app.app_context():
+    db.create_all()
 
 mail = Mail(app)
-
-# NOTE: sqlsession vs session usage: session is a login/logout browser session while sqlsession is a Session() object
-
-Base.metadata.create_all(engine)
-Session = sessionmaker(bind=engine)
-sqlsession = Session()
-conn = engine.connect()
-
 
 # route for the demopage. Not accessible to users that are logged in
 @app.route('/demo', methods=['GET', 'POST'])
@@ -126,7 +130,7 @@ def do_register():
             password = sha256_crypt.encrypt((str(form.password.data)))
 
             # check by username if a user is new or existent...
-            user_exists = sqlsession.query(User).filter(User.username == username).first()
+            user_exists = db.session.query(User).filter(User.username == username).first()
             # ... if it exists, notify the user
             if user_exists:
                 error = "That username is already taken, please choose another"
@@ -134,17 +138,17 @@ def do_register():
             # ..else, create the new user and company
             else:
                 print('success, user does not exist yet')
-                sqlsession.add(CompanyVN(company_name=company_name))
-                the_company = sqlsession.query(CompanyVN).order_by(CompanyVN.id.desc()).first()
+                db.session.add(CompanyVN(company_name=company_name))
+                the_company = db.session.query(CompanyVN).order_by(CompanyVN.id.desc()).first()
                 new_user = User(username=username, company_name=company_name, email=email, password=password,
                                 company_id=the_company.id)
-                sqlsession.add(new_user)
+                db.session.add(new_user)
 
-                sqlsession.commit()
+                db.session.commit()
                 # flash('thanks for registering')
                 welcome_text = 'Hi, you created and account with us at https://interactivenarrator.science.uu.nl'
 
-                send_email('Your account with Interactive Narrator', email, welcome_text)
+                #send_email('Your account with Interactive Narrator', email, welcome_text)
                 session['logged_in'] = True
                 session['username'] = username
 
@@ -162,7 +166,7 @@ def do_register():
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         print(exc_type, fname, exc_tb.tb_lineno)
         # make sure the session is reverted if an error occured
-        sqlsession.rollback()
+        db.session.rollback()
 
         error = 'Sorry, we could not register you'
 
@@ -181,7 +185,7 @@ def do_login():
                 POST_PASSWORD = str(request.form['password'])
 
                 # check if a user with the entered username exists
-                check_user = sqlsession.query(User).filter(User.username.in_([POST_USERNAME]))
+                check_user = db.session.query(User).filter(User.username.in_([POST_USERNAME]))
 
                 user_exists = check_user.first()
                 # print(user_exists.password)
@@ -200,7 +204,7 @@ def do_login():
                             user_exists.login_count = 0
                         user_exists.login_count = user_exists.login_count + 1
 
-                        sqlsession.commit()
+                        db.session.commit()
 
                         if session['username'] == 'admin':
                             return redirect(url_for('admin_dashboard'))
@@ -244,7 +248,7 @@ def reset():
     if request.method == "POST" and form.validate():
         print('email for rest validated')
         try:
-            user = sqlsession.query(User).filter(User.email == form.email.data).first()
+            user = db.session.query(User).filter(User.email == form.email.data).first()
             print(user)
         except Exception as e:
             print('Exception raised at rest password view', e)
@@ -278,13 +282,13 @@ def reset_with_token(token):
 
     if request.method == "POST" and form.validate():
         try:
-            user = sqlsession.query(User).filter(User.email == email).first()
+            user = db.session.query(User).filter(User.email == email).first()
         except:
             flash('Invalid email address!', 'error')
             return redirect(url_for('do_login'))
 
         user.password = sha256_crypt.encrypt((str(form.password.data)))
-        sqlsession.commit()
+        db.session.commit()
         flash('Your password has been updated!', 'success')
         return redirect(url_for('do_login'))
 
@@ -303,7 +307,7 @@ def send_password_reset_email(user_email):
         'reset_password_email.html',
         password_reset_url=password_reset_url)
 
-    send_email('Password Reset Requested', user_email, html)
+    #send_email('Password Reset Requested', user_email, html)
 
 # method to send an e-mail (this should actually not be in app.py)
 def send_email(subject, email, html):
@@ -324,12 +328,12 @@ def admin_dashboard():
         username = session['username']
         print(username)
         # show all the sprints that are in the database on the dashboard page
-        all_sprints = sqlsession.query(SprintVN)\
+        all_sprints = db.session.query(SprintVN)\
             .join(CompanyVN)\
             .join(User).filter(User.username == username).all()
 
         for sprint in all_sprints:
-            user_story_count = sqlsession.query(UserStoryVN).filter(UserStoryVN.in_sprint == sprint.id).count()
+            user_story_count = db.session.query(UserStoryVN).filter(UserStoryVN.in_sprint == sprint.id).count()
             print('COUNT USER STORIES', user_story_count)
             sprint = dict(sprint_id=sprint.id,
                           sprint_id_user = sprint.sprint_id_user,
@@ -339,10 +343,10 @@ def admin_dashboard():
                         user_story_count = user_story_count)
             sprints.append(sprint)
 
-        registered_users = sqlsession.query(User).all()
+        registered_users = db.session.query(User).all()
 
         # check what company name is regeistered for this user
-        company_present = sqlsession.query(CompanyVN).join(User).filter(User.username == username).first()
+        company_present = db.session.query(CompanyVN).join(User).filter(User.username == username).first()
 
         if company_present:
             company_name = company_present.company_name
@@ -367,12 +371,12 @@ def show_dash():
         username = session['username']
         print(username)
         # show all the sprints that are in the database on the dashboard page
-        all_sprints = sqlsession.query(SprintVN)\
+        all_sprints = db.session.query(SprintVN)\
             .join(CompanyVN)\
             .join(User).filter(User.username == username).all()
 
         for sprint in all_sprints:
-            user_story_count = sqlsession.query(UserStoryVN).filter(UserStoryVN.in_sprint == sprint.id).count()
+            user_story_count = db.session.query(UserStoryVN).filter(UserStoryVN.in_sprint == sprint.id).count()
             print('COUNT USER STORIES', user_story_count)
             sprint = dict(sprint_id=sprint.id,
                           sprint_id_user = sprint.sprint_id_user,
@@ -384,11 +388,11 @@ def show_dash():
 
         # extra data for admin
         if username == 'govertjan':
-            registered_users = sqlsession.query(User).all()
+            registered_users = db.session.query(User).all()
         else:
             registered_users = ''
         # check what company name is regeistered for this user
-        company_present = sqlsession.query(CompanyVN).join(User).filter(User.username == username).first()
+        company_present = db.session.query(CompanyVN).join(User).filter(User.username == username).first()
 
         if company_present:
             company_name = company_present.company_name
@@ -404,10 +408,10 @@ def delete_all():
     # get all userstories and delete them one by one
     # the cascade makes sure all sprints, relationships, classes and association table entries are deleted as well
 
-    active_user = sqlsession.query(User).filter(User.username == session['username']).first()
+    active_user = db.session.query(User).filter(User.username == session['username']).first()
 
     # find and delete all user stories and the classes, relationships connected to them
-    userstories = sqlsession.query(UserStoryVN) \
+    userstories = db.session.query(UserStoryVN) \
         .join(us_sprint_association_table) \
         .join(SprintVN).filter(SprintVN.user_id == active_user.id) \
         .join(CompanyVN) \
@@ -415,17 +419,17 @@ def delete_all():
 
 
     for userstory in userstories:
-        sqlsession.delete(userstory)
-        # sqlsession.commit()
+        db.session.delete(userstory)
+        # db.session.commit()
 
     # find orphan sprints and delete them if necessary
-    sprints = sqlsession.query(SprintVN).filter(SprintVN.user_id == active_user.id).all()
+    sprints = db.session.query(SprintVN).filter(SprintVN.user_id == active_user.id).all()
 
     for sprint in sprints:
-        sqlsession.delete(sprint)
+        db.session.delete(sprint)
 
     try:
-        sqlsession.commit()
+        db.session.commit()
         return redirect(url_for('show_dash'))
     except Exception as e:
         print('Exception raised', e)
@@ -434,7 +438,7 @@ def delete_all():
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         print(exc_type, fname, exc_tb.tb_lineno)
 
-        sqlsession.rollback()
+        db.session.rollback()
         return redirect(url_for('show_dash'))
 
 
@@ -442,19 +446,19 @@ def delete_all():
 # this method from the dashboard
 # @app.route('/delete_sprint/<int:id>', methods=['GET', 'POST'])
 # def delete_sprint(id):
-#     active_user = sqlsession.query(User).filter(User.username == session['username']).first()
+#     active_user = db.session.query(User).filter(User.username == session['username']).first()
 #
-#     userstories = sqlsession.query(UserStoryVN) \
+#     userstories = db.session.query(UserStoryVN) \
 #         .join(us_sprint_association_table) \
 #         .join(SprintVN) \
 #         .join(CompanyVN) \
 #         .join(User).filter(and_(SprintVN.id == id), (User.username == active_user.username)).all()
 #
 #     for userstory in userstories:
-#         sqlsession.delete(userstory)
+#         db.session.delete(userstory)
 #
 #     try:
-#         sqlsession.commit()
+#         db.session.commit()
 #         return redirect(url_for('show_dash'))
 #
 #     except Exception as e:
@@ -463,7 +467,7 @@ def delete_all():
 #         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
 #         print(exc_type, fname, exc_tb.tb_lineno)
 #
-#         sqlsession.rollback()
+#         db.session.rollback()
 #         return redirect(url_for('show_dash'))
 
 
@@ -474,12 +478,12 @@ def upload_form():
         # use the form class from form.py
         form = SetInfoForm(request.form)
         # check who the active user is
-        active_user = sqlsession.query(User).filter(User.username == session['username']).first()
+        active_user = db.session.query(User).filter(User.username == session['username']).first()
         print(session['username'])
         # if the active user is identified, set the company name of that of the user's company
         if active_user:
             active_company_name = active_user.company_name
-            active_company = sqlsession.query(CompanyVN).filter \
+            active_company = db.session.query(CompanyVN).filter \
                 (CompanyVN.company_name == active_company_name).first()
 
         if request.method == 'POST' and form.validate():
@@ -487,13 +491,13 @@ def upload_form():
             # sprint_form_data['sprint_id'] = form.sprint_id.data
             sprint_form_data['sprint_name'] = form.sprint_name.data
             # check of the inserted sprint values already exist
-            sprint_exists = sqlsession.query(SprintVN).filter\
+            sprint_exists = db.session.query(SprintVN).filter\
                 (SprintVN.sprint_name == sprint_form_data['sprint_name'])\
                 .join(CompanyVN)\
                 .join(User).filter(User.username == active_user.username)\
                 .first()
             #check if the user already has sprints, regardless of their name, and apply a user speficic id to it
-            newest_user_sprint = sqlsession.query(SprintVN).order_by(SprintVN.sprint_id_user.desc())\
+            newest_user_sprint = db.session.query(SprintVN).order_by(SprintVN.sprint_id_user.desc())\
                 .join(CompanyVN)\
                 .join(User).filter(User.username == active_user.username)\
                 .first()
@@ -529,13 +533,13 @@ def upload_form():
 
 
                     try:
-                        sqlsession.add(SprintVN(sprint_id_user=highest_user_sprint_id + 1, sprint_name=sprint_form_data['sprint_name'],
+                        db.session.add(SprintVN(sprint_id_user=highest_user_sprint_id + 1, sprint_name=sprint_form_data['sprint_name'],
                                                 company_name=active_company_name, company_id=active_company.id, user_id=active_user.id))
                         print('added sprint')
                         # now add the sprint to the database
-                        sqlsession.commit()
+                        db.session.commit()
                         # find the sprint that was just added,
-                        newest_sprint = sqlsession.query(SprintVN).filter(and_(
+                        newest_sprint = db.session.query(SprintVN).filter(and_(
                             SprintVN.sprint_name == sprint_form_data['sprint_name']), (SprintVN.user_id == active_user.id)) \
                             .order_by(SprintVN.id.desc())\
                             .first()
@@ -552,8 +556,8 @@ def upload_form():
                         error = 'Sorry, the file could not be decoded properly. ' \
                                 'It might be ASCII encoded, Please try UTF-8 Unicode encoding for your file'
                         if newest_sprint:
-                            sqlsession.delete(newest_sprint)
-                            sqlsession.commit()
+                            db.session.delete(newest_sprint)
+                            db.session.commit()
                         else:
                             pass
                         return render_template('uploadform.html', form=form, error=error)
@@ -562,8 +566,8 @@ def upload_form():
                         error = 'Sorry, datatype of the file was not accepted by our system. ' \
                                 'Please try UTF-8 UNICODE in .txt or .csv files'
                         if newest_sprint:
-                            sqlsession.delete(newest_sprint)
-                            sqlsession.commit()
+                            db.session.delete(newest_sprint)
+                            db.session.commit()
                         else:
                             pass
                         return render_template('uploadform.html', form=form, error=error)
@@ -573,9 +577,9 @@ def upload_form():
                         error = 'Sorry, the file was not accepted by our system. ' \
                                 'Does it really contain user stories in the format "as a (role) I want to (goal)"?'
                         if newest_sprint:
-                            # sqlsession.query(SprintVN).filter(SprintVN.sprint_name == newest_sprint.sprint_name).delete()
-                            sqlsession.delete(newest_sprint)
-                            sqlsession.commit()
+                            # db.session.query(SprintVN).filter(SprintVN.sprint_name == newest_sprint.sprint_name).delete()
+                            db.session.delete(newest_sprint)
+                            db.session.commit()
                             print('the newest sprint is deleted because of content')
                         else:
                             pass
@@ -588,8 +592,8 @@ def upload_form():
                         print(exc_type, fname, exc_tb.tb_lineno)
 
                         if newest_sprint:
-                            sqlsession.delete(newest_sprint)
-                            sqlsession.commit()
+                            db.session.delete(newest_sprint)
+                            db.session.commit()
                         else:
                             pass
                         error = 'Sorry, the file could not be processed. ' \
@@ -603,14 +607,14 @@ def upload_form():
                 else:
                     error = 'Sorry, the app could not accept and process your file.'
 
-                    newest_sprint = sqlsession.query(SprintVN).filter(and_(
+                    newest_sprint = db.session.query(SprintVN).filter(and_(
                         SprintVN.sprint_name == sprint_form_data['sprint_name']), (SprintVN.user_id == active_user.id)) \
                         .order_by(SprintVN.id.desc()) \
                         .first()
 
                     if newest_sprint:
-                        sqlsession.delete(newest_sprint)
-                        sqlsession.commit()
+                        db.session.delete(newest_sprint)
+                        db.session.commit()
                     else:
                         pass
 
@@ -635,7 +639,7 @@ def allowed_file(filename):
 def get_roles():
     username = session['username']
 
-    functional_roles = sqlsession.query(UserStoryVN.functional_role.distinct().label("functional_role"))\
+    functional_roles = db.session.query(UserStoryVN.functional_role.distinct().label("functional_role"))\
         .join(us_sprint_association_table) \
         .join(SprintVN) \
         .join(CompanyVN) \
@@ -650,7 +654,7 @@ def get_sprints():
     username = session['username']
     # show all the sprints that are in the database for this user on the dashboard page
 
-    sprints = sqlsession.query(SprintVN) \
+    sprints = db.session.query(SprintVN) \
         .join(CompanyVN) \
         .join(User).filter(User.username == username).all()
 
@@ -666,23 +670,23 @@ def click_query():
     checked_roles = json.loads(request.args.get('roles'))
     checked_sprints = json.loads(request.args.get('sprints'))
 
-    active_user = sqlsession.query(User).filter(User.username == session['username']).first()
+    active_user = db.session.query(User).filter(User.username == session['username']).first()
 
     # find the user_sprint_ids that belong to the sprint_ids
-    checked_sprints_ids = sqlsession.query(SprintVN) \
+    checked_sprints_ids = db.session.query(SprintVN) \
         .filter(and_(SprintVN.user_id == active_user.id),(SprintVN.sprint_id_user.in_(checked_sprints))).all()
 
     checked_sprints_ids_list = [sprint.id for sprint in checked_sprints_ids]
 
     print('SELECETD ROLES AND SPRINTS', checked_roles, checked_sprints, checked_sprints_ids, checked_sprints_ids_list)
     node_userstory_list = []
-    # active_user = sqlsession.query(User).filter(User.username == session['username']).first()
+    # active_user = db.session.query(User).filter(User.username == session['username']).first()
 
     for one_node in clicked_nodes:
         print('CLICKED NODE/CONCEPT ID', one_node['id'])
-        # node_concept = sqlsession.query(ClassVN).filter(ClassVN.class_id == one_node['id']).all()
+        # node_concept = db.session.query(ClassVN).filter(ClassVN.class_id == one_node['id']).all()
 
-        node_userstories = sqlsession.query(UserStoryVN)\
+        node_userstories = db.session.query(UserStoryVN)\
             .join(us_class_association_table)\
             .join(ClassVN) \
             .filter(and_(ClassVN.class_id == one_node['id']),
@@ -712,17 +716,17 @@ def get_nodes_edges():
     checked_roles = json.loads(request.args.get('roles'))
     checked_sprints = json.loads(request.args.get('sprints'))
 
-    active_user = sqlsession.query(User).filter(User.username == session['username']).first()
+    active_user = db.session.query(User).filter(User.username == session['username']).first()
 
     # find the user_sprint_ids that belong to the sprint_ids
-    checked_sprints_ids = sqlsession.query(SprintVN) \
+    checked_sprints_ids = db.session.query(SprintVN) \
         .filter(and_(SprintVN.user_id == active_user.id), (SprintVN.sprint_id_user.in_(checked_sprints))).all()
 
     checked_sprints_ids_list = [sprint.id for sprint in checked_sprints_ids]
 
     # retrieve all the classes belonging to the selection
     print('CHECKED ROLES AND SPRINTS @ /QUERY', checked_roles, checked_sprints, checked_sprints_ids_list)
-    classes = sqlsession.query(ClassVN) \
+    classes = db.session.query(ClassVN) \
         .join(us_class_association_table) \
         .join(UserStoryVN) \
         .join(us_sprint_association_table) \
@@ -741,7 +745,7 @@ def get_nodes_edges():
     class_name_id_map = {cl.class_name: cl.class_id for cl in classes}
     # print('CLASS_NAME_ID_MAP', len(class_names), len(class_name_id_map))
 
-    class_relationships = sqlsession.query(RelationShipVN) \
+    class_relationships = db.session.query(RelationShipVN) \
         .join(us_relationship_association_table) \
         .join(UserStoryVN) \
         .join(us_sprint_association_table) \
@@ -785,11 +789,11 @@ def get_nodes_edges():
 def cluster():
     # get all the nodes that are connected to a role
     x = 1
-    start_at_role = sqlsession.query(UserStoryVN.functional_role).distinct()
+    start_at_role = db.session.query(UserStoryVN.functional_role).distinct()
     list_of_roles = [role.functional_role for role in start_at_role]
     nodes = []
     for role in list_of_roles:
-        classes = sqlsession.query(ClassVN) \
+        classes = db.session.query(ClassVN) \
             .join(us_class_association_table) \
             .join(UserStoryVN) \
             .filter(or_(UserStoryVN.functional_role == func.lower(role),
@@ -799,7 +803,7 @@ def cluster():
         for concept in classes:
             concept.cluster = x
             nodes.append([{"name": concept.class_name} for concept in classes])
-        sqlsession.commit()
+        db.session.commit()
         x = x + 1
 
     json_nodes = json.dumps(nodes)
@@ -811,15 +815,15 @@ def cluster():
 @app.route('/concepts')
 def concepts():
     # first apply the "Role" mark to each concept that is a functional_role:
-    all_roles = sqlsession.query(ClassVN).filter(ClassVN.group == '1').all()
+    all_roles = db.session.query(ClassVN).filter(ClassVN.group == '1').all()
     # update their "group" attribute
     for role in all_roles:
         role.group = "Role"
-        sqlsession.commit()
+        db.session.commit()
 
     username = session['username']
     # show all the sprints that are in the database on the dashboard page
-    concepts_query = sqlsession.query(ClassVN) \
+    concepts_query = db.session.query(ClassVN) \
         .join(us_class_association_table) \
         .join(UserStoryVN) \
         .join(us_sprint_association_table) \
@@ -830,7 +834,7 @@ def concepts():
         .all()
 
     # now jsonify and return the concepts to the fore-end
-    # concepts_query = sqlsession.query(ClassVN).all()
+    # concepts_query = db.session.query(ClassVN).all()
     concept_list = []
     # concepts_query_res = conn.execute(concepts_query)
     for c in concepts_query:
@@ -848,7 +852,7 @@ def concepts():
 def relationships():
     username = session['username']
     # show all the sprints that are in the database on the dashboard page
-    concepts_query = sqlsession.query(ClassVN) \
+    concepts_query = db.session.query(ClassVN) \
         .join(us_class_association_table) \
         .join(UserStoryVN) \
         .join(us_sprint_association_table) \
@@ -858,7 +862,7 @@ def relationships():
         .all()
 
     # show all the sprints that are in the database on the dashboard page
-    relationships_query = sqlsession.query(RelationShipVN) \
+    relationships_query = db.session.query(RelationShipVN) \
         .join(us_relationship_association_table) \
         .join(UserStoryVN) \
         .join(us_sprint_association_table) \

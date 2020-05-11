@@ -1,3 +1,9 @@
 app.db
 config.py
 passenger_wsgi.py
+ENV
+__pycache__
+app/output
+app/uploads
+.vscode
+*.DS_Store

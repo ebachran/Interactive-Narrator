@@ -4,21 +4,20 @@ from sqlalchemy import Column, Table, DateTime, Boolean
 from sqlalchemy.schema import UniqueConstraint
 from sqlalchemy import Integer, String, Text, ForeignKey
 from sqlalchemy.orm import relationship, synonym
-from sqlalchemy.ext.declarative import declarative_base
 
-Base = declarative_base()
+from app import db
 
 from flask_security import Security, SQLAlchemyUserDatastore, \
     UserMixin, RoleMixin, login_required
 
 
-class RolesUsers(Base):
+class RolesUsers(db.Model):
     __tablename__ = 'roles_users'
     id = Column(Integer(), primary_key=True)
     user_id = Column('user_id', Integer(), ForeignKey('user.id'))
     role_id = Column('role_id', Integer(), ForeignKey('role.id'))
 
-class Role(Base, RoleMixin):
+class Role(db.Model, RoleMixin):
     __tablename__ = 'role'
     id = Column(Integer(), primary_key=True)
     name = Column(String(80), unique=True)
@@ -27,7 +26,7 @@ class Role(Base, RoleMixin):
 
 # Flask/SQLAlchemy ORM mappings for the objects we store in the DB
 
-class User(Base, UserMixin):
+class User(db.Model, UserMixin):
     """A user login, with credentials and authentication."""
     __tablename__ = 'user'
 
@@ -90,8 +89,10 @@ class User(Base, UserMixin):
     #         return user, False
     #     return user, user.check_password(password)
 
-
-class CompanyVN(Base):
+    def __repr__(self):
+            return '<User {}>'.format(self.username)
+            
+class CompanyVN(db.Model):
     """ The company to which a registered user belongs """
     __tablename__ = 'company'
 
@@ -104,14 +105,14 @@ class CompanyVN(Base):
 
 
 # table for the many to many relationship between userstories and sprints
-us_sprint_association_table = Table('us_sprint_association', Base.metadata,
+us_sprint_association_table = Table('us_sprint_association', db.Model.metadata,
                                     Column('sprint_id', Integer, ForeignKey('sprint.id')),
                                     # Column('userstory_id', Integer, ForeignKey('userstory.userstory_id'))
                                     Column('id', Integer, ForeignKey('userstory.id'))
                                     )
 
 
-class SprintVN(Base):
+class SprintVN(db.Model):
     """ A set of multiple userstories """
     __tablename__ = 'sprint'
 
@@ -124,20 +125,20 @@ class SprintVN(Base):
 
 
 # table for the many to many relationship between userstories and concepts (classes)
-us_class_association_table = Table('us_class_association', Base.metadata,
+us_class_association_table = Table('us_class_association', db.Model.metadata,
                                    # Column('userstory_id', Integer, ForeignKey('userstory.userstory_id')),
                                    Column('userstory_id', Integer, ForeignKey('userstory.id')),
                                    Column('class_id', Integer, ForeignKey('class.class_id'))
                                    )
 
 #  table for the many to many relationship between userstories and relationships
-us_relationship_association_table = Table('us_relationship_association', Base.metadata,
+us_relationship_association_table = Table('us_relationship_association', db.Model.metadata,
                                           Column('userstory_id', Integer, ForeignKey('userstory.id')),
                                           Column('relationship_id', Integer, ForeignKey('relationship.relationship_id'))
                                           )
 
 
-class UserStoryVN(Base):
+class UserStoryVN(db.Model):
     """A UserStory """
     __tablename__ = 'userstory'
 
@@ -164,7 +165,7 @@ class UserStoryVN(Base):
                                  secondary=us_relationship_association_table, backref="relationships", lazy='dynamic')
 
 
-class ClassVN(Base):
+class ClassVN(db.Model):
     """ A concept from a userstory """
     __tablename__ = 'class'
 
@@ -179,7 +180,7 @@ class ClassVN(Base):
     __table_args__ = (UniqueConstraint('class_name', 'user', name='_class_user_uc'),)
 
 
-class RelationShipVN(Base):
+class RelationShipVN(db.Model):
     """A Relationship between two objects between user stories """
     __tablename__ = 'relationship'
 
@@ -188,14 +189,3 @@ class RelationShipVN(Base):
     relationship_name = Column(Text)
     relationship_range = Column(Text)
     user = Column(Integer, ForeignKey('user.id'))
-
-
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
-# create the database
-engine = create_engine('sqlite:///app.db', echo=True)
-# create the tables with the engine
-Base.metadata.create_all(engine)
-Session = sessionmaker(bind=engine)
-session = Session()
